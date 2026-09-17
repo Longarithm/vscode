@@ -7,10 +7,11 @@ import { disposableTimeout } from '../../../../../base/common/async.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { isCancellationError } from '../../../../../base/common/errors.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { autorun, derived, disposableObservableValue, observableSignalFromEvent, observableValue, transaction, waitForState, type IObservable, type ITransaction } from '../../../../../base/common/observable.js';
+import { autorun, derived, disposableObservableValue, observableSignalFromEvent, observableValue, transaction, waitForState, type IObservable, type ISettableObservable, type ITransaction } from '../../../../../base/common/observable.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import type { AutomationRunTrigger, IAutomationDescriptor, IAutomationRun } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { type AutomationCatalogueState, isAutomationActiveRunError, type AutomationMutationGuard, type IAutomationRunClaim, type ICreateAutomationOptions, type IGuardedAutomationUpdateResult, type IUpdateAutomationOptions, type IUpdateAutomationRunOptions } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
 import type { IAutomation, IAutomationSnapshotImportResult, IGuardedAutomationSnapshotRemovalResult, ISessionsProviderAutomations } from '../../../../services/sessions/common/sessionsProvider.js';
@@ -18,6 +19,7 @@ import { AgentHostAutomationStore, type IAgentHostAutomationBoundaryMapper, type
 import { CHAT_AUTOMATIONS_ENABLED_SETTING } from '../../../../../workbench/contrib/chat/common/automations/automationsEnabled.js';
 
 const MIGRATION_RETRY_DELAY_MS = 30_000;
+const HOST_AUTOMATION_OWNERSHIP_STORAGE_KEY_PREFIX = 'agentHostAutomation.hasKnownAutomations.';
 
 type AutomationAuthorityState =
 	| { readonly kind: 'disconnected' | 'initializing' | 'unsupported' | 'disabled' }
@@ -33,7 +35,8 @@ export class ReconnectableAgentHostAutomationStore extends Disposable implements
 	private readonly _runsForCache = new Map<string, IObservable<readonly IAutomationRun[]>>();
 	private readonly _configurationChanged;
 	private readonly _authorityState = observableValue<AutomationAuthorityState>(this, { kind: 'disconnected' });
-	private readonly _lastKnownHostHasAutomations = observableValue(this, false);
+	private readonly _lastKnownHostHasAutomations: ISettableObservable<boolean>;
+	private readonly _hostAutomationOwnershipStorageKey: string;
 	private readonly _disposeCancellation = new CancellationTokenSource();
 
 	readonly automations = derived(this, reader => this._currentStore.read(reader)?.automations.read(reader) ?? this._legacySource?.automations.read(reader) ?? []);
@@ -61,13 +64,21 @@ export class ReconnectableAgentHostAutomationStore extends Disposable implements
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@ILogService private readonly _logService: ILogService,
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@IStorageService private readonly _storageService: IStorageService,
 	) {
 		super();
+		this._hostAutomationOwnershipStorageKey = `${HOST_AUTOMATION_OWNERSHIP_STORAGE_KEY_PREFIX}${encodeURIComponent(this._providerId)}`;
+		this._lastKnownHostHasAutomations = observableValue(this, this._readPersistedHostAutomationOwnership());
 		this._configurationChanged = observableSignalFromEvent(this, this._configurationService.onDidChangeConfiguration);
+		this._register(this._storageService.onDidChangeValue(StorageScope.APPLICATION, this._hostAutomationOwnershipStorageKey, this._store)(() => {
+			this._lastKnownHostHasAutomations.set(this._readPersistedHostAutomationOwnership(), undefined);
+		}));
 		this._register(autorun(reader => {
 			const state = this._authorityState.read(reader);
 			if (state.kind === 'supported' && state.store.catalogueState.read(reader) === 'ready') {
-				this._lastKnownHostHasAutomations.set(state.store.hasKnownAutomations.read(reader), undefined);
+				const hasKnownAutomations = state.store.hasKnownAutomations.read(reader);
+				this._lastKnownHostHasAutomations.set(hasKnownAutomations, undefined);
+				this._storageService.store(this._hostAutomationOwnershipStorageKey, hasKnownAutomations, StorageScope.APPLICATION, StorageTarget.MACHINE);
 			}
 		}));
 	}
@@ -289,5 +300,9 @@ export class ReconnectableAgentHostAutomationStore extends Disposable implements
 
 	private _requireOperationalStore(): ISessionsProviderAutomations {
 		return this._currentStore.get() ?? this._legacySource ?? this._requireAgentHostStore();
+	}
+
+	private _readPersistedHostAutomationOwnership(): boolean {
+		return this._storageService.getBoolean(this._hostAutomationOwnershipStorageKey, StorageScope.APPLICATION, false);
 	}
 }

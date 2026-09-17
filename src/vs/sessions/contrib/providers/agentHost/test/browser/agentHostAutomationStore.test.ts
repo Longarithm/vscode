@@ -2177,6 +2177,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			new NullLogService(),
 			configurationService,
+			storage,
 		));
 		store.setConnection(connection);
 		await assert.rejects(store.completeMigration(), /cannot be migrated safely/);
@@ -2212,6 +2213,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			new NullLogService(),
 			configurationService,
+			storage,
 		));
 		const emissions: { automationCount: number; catalogueState: AutomationCatalogueState }[] = [];
 		disposables.add(autorun(reader => {
@@ -2235,6 +2237,16 @@ suite('AgentHostAutomationStore', () => {
 		store.clearConnection();
 		const disconnectEmissions = emissions.slice(emissionsBeforeDisconnect);
 		const afterDisconnect = { state: store.catalogueState.get(), hasKnownAutomations: store.hasKnownAutomations.get() };
+		const restoredAfterDisconnect = disposables.add(instantiationService.createInstance(
+			ReconnectableAgentHostAutomationStore,
+			'local-agent-host',
+			legacy,
+			undefined,
+		));
+		const restoredAfterDisconnectState = {
+			state: restoredAfterDisconnect.catalogueState.get(),
+			hasKnownAutomations: restoredAfterDisconnect.hasKnownAutomations.get(),
+		};
 		connection.setCatalogAvailable(false);
 		store.setConnection(connection);
 		const duringReconnect = { state: store.catalogueState.get(), count: store.automations.get().length, hasKnownAutomations: store.hasKnownAutomations.get() };
@@ -2244,17 +2256,28 @@ suite('AgentHostAutomationStore', () => {
 		await store.deleteAutomation(created.id);
 		const afterDelete = { state: store.catalogueState.get(), count: store.automations.get().length, hasKnownAutomations: store.hasKnownAutomations.get() };
 		store.clearConnection();
+		const restoredAfterEmptyDisconnect = disposables.add(instantiationService.createInstance(
+			ReconnectableAgentHostAutomationStore,
+			'local-agent-host',
+			legacy,
+			undefined,
+		));
 
 		assert.deepStrictEqual({
 			initiallyDisconnected,
 			connectEmissions,
 			connected,
 			afterDisconnect,
+			restoredAfterDisconnect: restoredAfterDisconnectState,
 			disconnectEmissions,
 			duringReconnect,
 			afterReconnect,
 			afterDelete,
 			afterEmptyDisconnect: { state: store.catalogueState.get(), count: store.automations.get().length, hasKnownAutomations: store.hasKnownAutomations.get() },
+			restoredAfterEmptyDisconnect: {
+				state: restoredAfterEmptyDisconnect.catalogueState.get(),
+				hasKnownAutomations: restoredAfterEmptyDisconnect.hasKnownAutomations.get(),
+			},
 		}, {
 			initiallyDisconnected: { state: 'unavailable', hasKnownAutomations: false },
 			connectEmissions: [
@@ -2263,11 +2286,13 @@ suite('AgentHostAutomationStore', () => {
 			],
 			connected: { state: 'ready', hasKnownAutomations: true },
 			afterDisconnect: { state: 'unavailable', hasKnownAutomations: true },
+			restoredAfterDisconnect: { state: 'unavailable', hasKnownAutomations: true },
 			disconnectEmissions: [{ automationCount: 0, catalogueState: 'unavailable' }],
 			duringReconnect: { state: 'loading', count: 0, hasKnownAutomations: true },
 			afterReconnect: { state: 'ready', count: 1, hasKnownAutomations: true },
 			afterDelete: { state: 'ready', count: 0, hasKnownAutomations: false },
 			afterEmptyDisconnect: { state: 'unavailable', count: 0, hasKnownAutomations: false },
+			restoredAfterEmptyDisconnect: { state: 'unavailable', hasKnownAutomations: false },
 		});
 	});
 
@@ -2283,7 +2308,7 @@ suite('AgentHostAutomationStore', () => {
 			target: { kind: 'quickChat', providerId: 'remote-agent-host', sessionTypeId: 'copilotcli' },
 		});
 		const instantiationService = disposables.add(new TestInstantiationService());
-		const store = disposables.add(new ReconnectableAgentHostAutomationStore('remote-agent-host', legacy, undefined, instantiationService, new NullLogService(), new TestConfigurationService()));
+		const store = disposables.add(new ReconnectableAgentHostAutomationStore('remote-agent-host', legacy, undefined, instantiationService, new NullLogService(), new TestConfigurationService(), storage));
 		const availableRows = {
 			state: store.catalogueState.get(),
 			names: store.automations.get().map(automation => automation.name),
@@ -2322,6 +2347,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			new NullLogService(),
 			configurationService,
+			storage,
 		));
 		store.setConnection(connection);
 		await store.createAutomation({
@@ -2389,6 +2415,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			new NullLogService(),
 			configurationService,
+			storage,
 		));
 		store.setConnection(connection);
 
@@ -2425,6 +2452,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			new NullLogService(),
 			configurationService,
+			storage,
 		));
 		store.setConnection(connection);
 		const migration = store.completeMigration();
@@ -2463,6 +2491,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			new NullLogService(),
 			configurationService,
+			storage,
 		));
 		store.setConnection(connection);
 
@@ -2489,6 +2518,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			new NullLogService(),
 			configurationService,
+			storage,
 		));
 		store.setConnection(connection);
 		const migration = store.completeMigration();
@@ -2524,6 +2554,7 @@ suite('AgentHostAutomationStore', () => {
 			instantiationService,
 			logService,
 			configurationService,
+			storage,
 		));
 		store.setConnection(connection);
 		const migration = store.completeMigration();

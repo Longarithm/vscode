@@ -53,6 +53,7 @@ import { COPILOT_CLI_EH_SCHEME, COPILOT_CLI_LOCAL_AH_SCHEME } from '../../../../
 const stubChat = {
 	resource: URI.parse('test:///chat'),
 	createdAt: new Date(),
+	workspace: constObservable(undefined),
 	title: constObservable('Chat'),
 	updatedAt: constObservable(new Date()),
 	status: constObservable(0),

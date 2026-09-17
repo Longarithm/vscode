@@ -4232,6 +4232,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 			await this._activeClients.get(current.configurationResource)?.pluginController.retryFailedClientSyncIfNeeded();
 
 			let entry: CopilotAgentSession | undefined = current.target;
+			const hadCachedEntry = !!entry;
 			if (!entry) {
 				entry = await this._ensureResolvedChatSession(current, workingDirectories);
 			}
@@ -4239,8 +4240,8 @@ export class CopilotAgent extends Disposable implements IAgent {
 			// If the active client's config changed (tools or plugins),
 			// dispose this session so it gets resumed with the updated config.
 			const activeClient = this._activeClients.get(current.configurationResource);
-			const hadCachedEntry = !!entry;
 			this._logService.info(`[Copilot:${current.configurationId}] sendMessage: cachedEntry=${hadCachedEntry}, hasActiveClient=${!!activeClient}, activeClientId=${activeClient ? '(set)' : '(none)'}`);
+			const primaryWorkingDirectoryChanged = hadCachedEntry && workingDirectories?.[0] !== undefined && !isEqual(entry?.workingDirectory, workingDirectories[0]);
 			const rootsChanged = !!entry && workingDirectories !== undefined && !areAdditionalWorkingDirectoriesEqual(entry.appliedAdditionalDirectories, this._additionalCustomizationDirectories(workingDirectories));
 			const currentSnapshot = entry && activeClient ? await activeClient.snapshot(current.chatKey) : undefined;
 			const structuralRestartReason = entry && activeClient && currentSnapshot ? await activeClient.getRestartReason(entry.appliedSnapshot, current.chatKey, currentSnapshot) : undefined;
@@ -4251,7 +4252,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 				[...new Set(entry.appliedDisabledRootMcpServers)].sort(),
 				[...new Set(currentDisabledRootMcpServers)].sort(),
 			);
-			const refreshReason = (entry?.requiresRestartAfterWorkingDirectoryChange ? 'workingDirectoryChanged' : undefined)
+			const refreshReason = (entry?.requiresRestartAfterWorkingDirectoryChange || primaryWorkingDirectoryChanged ? 'workingDirectoryChanged' : undefined)
 				?? (rootsChanged ? 'additionalDirectoriesChanged' : undefined)
 				?? structuralRestartReason
 				?? (disabledRootMcpServersChanged ? 'disabledRootMcpServersChanged' : undefined)
@@ -4996,6 +4997,9 @@ export class CopilotAgent extends Disposable implements IAgent {
 				const storedMetadata = await this._readSessionMetadata(configurationResource);
 				const resumeWorkingDirectories = this._workingDirectoriesForResume(storedMetadata, workingDirectories);
 				const parentEntry = this._findSessionBySdkId(configurationId);
+				const sessionWorkingDirectory = storedMetadata.workingDirectory
+					?? parentEntry?.workingDirectory
+					?? this._provisionalSessions.get(configurationId)?.workingDirectory;
 				const persistedWorkingDirectory = resumeWorkingDirectories?.[0] ?? parentEntry?.workingDirectory
 					?? this._provisionalSessions.get(configurationId)?.workingDirectory
 					?? storedMetadata.workingDirectory;
@@ -5003,7 +5007,9 @@ export class CopilotAgent extends Disposable implements IAgent {
 					this._logService.warn(`[Copilot] Cannot resume chat ${chatKey}: missing working directory`);
 					return undefined;
 				}
-				const workingDirectory = await this._worktree.resolveWorkingDirectoryForResume(configurationResource, AgentSession.id(configurationResource), persistedWorkingDirectory);
+				const workingDirectory = resumeWorkingDirectories?.[0] && !isEqual(resumeWorkingDirectories[0], sessionWorkingDirectory)
+					? resumeWorkingDirectories[0]
+					: await this._worktree.resolveWorkingDirectoryForResume(configurationResource, AgentSession.id(configurationResource), persistedWorkingDirectory);
 				const launchWorkingDirectories = resumeWorkingDirectories
 					? [workingDirectory, ...resumeWorkingDirectories.slice(1)]
 					: undefined;

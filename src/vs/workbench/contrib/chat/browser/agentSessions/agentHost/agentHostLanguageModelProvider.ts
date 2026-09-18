@@ -126,6 +126,7 @@ export class AgentHostLanguageModelProvider extends Disposable implements ILangu
 						...(detail !== undefined && { detail }),
 						maxInputTokens: m.maxPromptTokens ?? known?.maxInputTokens ?? 0,
 						maxOutputTokens: m.maxOutputTokens ?? known?.maxOutputTokens ?? 0,
+						maxContextWindowTokens: m.maxContextWindow ?? known?.maxContextWindowTokens,
 						isDefaultForLocation: {},
 						isUserSelectable: true,
 						statusIcon: notices?.rowWarning ? Codicon.warning : undefined,

@@ -31,7 +31,7 @@ function parseUri(value: string | undefined): URI | undefined {
 	}
 }
 
-function toSessionArtifact(artifact: IProtocolSessionArtifact): ISessionArtifact | undefined {
+function toSessionArtifact(artifact: IProtocolSessionArtifact, mapChat: ((chat: string) => URI | undefined) | undefined): ISessionArtifact | undefined {
 	const kind = kindByType.get(artifact.type);
 	if (!kind) {
 		return undefined;
@@ -39,8 +39,9 @@ function toSessionArtifact(artifact: IProtocolSessionArtifact): ISessionArtifact
 
 	const link = parseUri(artifact.link);
 	const uri = parseUri(artifact.uri);
+	const chat = artifact.chat ? (mapChat ? mapChat(artifact.chat) : parseUri(artifact.chat)) : undefined;
 	// An artifact the client cannot act on is not worth surfacing.
-	if (!link && !uri && !artifact.commitHash) {
+	if ((!link && !uri && !artifact.commitHash) || (artifact.chat && !chat)) {
 		return undefined;
 	}
 
@@ -49,6 +50,7 @@ function toSessionArtifact(artifact: IProtocolSessionArtifact): ISessionArtifact
 		kind,
 		label: artifact.label,
 		isArtifact: artifact.isArtifact,
+		...(chat ? { chat } : {}),
 		...(link ? { link } : {}),
 		...(uri ? { uri } : {}),
 		...(artifact.commitHash ? { commitHash: artifact.commitHash } : {}),
@@ -62,6 +64,8 @@ export interface ISessionArtifactPartition {
 	readonly entries: readonly ISessionArtifactEntry[];
 	/** Pull requests this session produced, most recent first; polled and shown in the pull request pill. */
 	readonly pullRequestUrls: readonly string[];
+	/** Originating chat for each produced pull request, keyed by {@link linkKey}. */
+	readonly pullRequestChats: ReadonlyMap<string, URI>;
 	/**
 	 * Titles the agent recorded for its pull request artifacts, keyed by
 	 * {@link linkKey}. Pull requests discovered from git state have no entry.
@@ -95,15 +99,16 @@ function gitHubLink(artifact: IProtocolSessionArtifact): string | undefined {
 	return undefined;
 }
 
-export function partitionSessionArtifacts(meta: SessionMeta | undefined): ISessionArtifactPartition {
+export function partitionSessionArtifacts(meta: SessionMeta | undefined, mapChat?: (chat: string) => URI | undefined): ISessionArtifactPartition {
 	const entries: ISessionArtifactEntry[] = [];
 	const pullRequestUrls: string[] = [];
+	const pullRequestChats = new Map<string, URI>();
 	const pullRequestTitles = new Map<string, string>();
 	const issueUrls: string[] = [];
 	const issueTitles = new Map<string, string>();
 
 	for (const artifact of readSessionArtifacts(meta)) {
-		const mapped = toSessionArtifact(artifact);
+		const mapped = toSessionArtifact(artifact, mapChat);
 		if (!mapped) {
 			continue;
 		}
@@ -125,6 +130,9 @@ export function partitionSessionArtifacts(meta: SessionMeta | undefined): ISessi
 		}
 
 		pullRequestUrls.push(link);
+		if (mapped.chat) {
+			pullRequestChats.set(key, mapped.chat);
+		}
 	}
 
 	// Reversed here, after the walk let the first title recorded for a link win.
@@ -132,7 +140,7 @@ export function partitionSessionArtifacts(meta: SessionMeta | undefined): ISessi
 	pullRequestUrls.reverse();
 	issueUrls.reverse();
 
-	return { entries, pullRequestUrls, pullRequestTitles, issueUrls, issueTitles };
+	return { entries, pullRequestUrls, pullRequestChats, pullRequestTitles, issueUrls, issueTitles };
 }
 
 /** Case-insensitive de-duplication that keeps the first occurrence's casing. */

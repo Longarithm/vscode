@@ -65,21 +65,21 @@ export const artifactServerToolDefinitions: ToolDefinition[] = [
 	{
 		name: ArtifactServerToolName.AddArtifactOrReference,
 		title: 'Add Artifact or Reference',
-		description: `Record one or more artifacts or references so they are surfaced next to the chat input. Use \`items\` and batch related entries in one call when practical. Registration is optional, not an inventory of everything saved; default to no registration. ${artifactClassification} Other artifacts are deliverables the user requested or standalone results they are clearly likely to reopen, download, or reuse, such as a report or plan the user asked for. References are noteworthy existing resources the user will likely want to view. Do not record routine files, scratch files, caches, logs, intermediate results, or configuration snapshots unless the user asked for them as deliverables; persistence or location outside the workspace is not an eligibility signal. Do not record incidental resources or sessions and chats created with session-management tools. Never create, copy, or relocate a file solely to have an artifact to register.`,
+		description: `Record one or more artifacts or references for the current chat so they are surfaced next to its input. Use \`items\` and batch related entries in one call when practical. Registration is optional, not an inventory of everything saved; default to no registration. ${artifactClassification} Other artifacts are deliverables the user requested or standalone results they are clearly likely to reopen, download, or reuse, such as a report or plan the user asked for. References are noteworthy existing resources the user will likely want to view. Do not record routine files, scratch files, caches, logs, intermediate results, or configuration snapshots unless the user asked for them as deliverables; persistence or location outside the workspace is not an eligibility signal. Do not record incidental resources or sessions and chats created with session-management tools. Never create, copy, or relocate a file solely to have an artifact to register.`,
 		inputSchema: addArtifactInputSchema,
 		annotations: { readOnlyHint: false },
 	},
 	{
 		name: ArtifactServerToolName.RemoveArtifactOrReference,
 		title: 'Remove Artifact or Reference',
-		description: 'Remove an artifact or reference from this session by id.',
+		description: 'Remove an artifact or reference visible to the current chat by id.',
 		inputSchema: removeArtifactInputSchema,
 		annotations: { readOnlyHint: false, destructiveHint: true },
 	},
 	{
 		name: ArtifactServerToolName.ListArtifactsAndReferences,
 		title: 'List Artifacts and References',
-		description: 'List the artifacts and references recorded on this session, with their ids.',
+		description: 'List the artifacts and references visible to the current chat, with their ids.',
 		inputSchema: listArtifactsInputSchema,
 		annotations: { readOnlyHint: true },
 	},
@@ -190,7 +190,7 @@ export function createArtifactServerToolGroup(accessor?: IArtifactServerToolAcce
 					const result = await artifacts.mutate(collection => {
 						const messages: string[] = [];
 						for (const input of inputs) {
-							const result = collection.add(input, generateUuid);
+							const result = collection.add({ ...input, chat: context.chatUri }, generateUuid);
 							collection = new SessionArtifactCollection(result.artifacts);
 							messages.push(result.added
 								? `Added ${entryNoun(result.artifact.isArtifact)}: ${describeArtifact(result.artifact)}`
@@ -205,7 +205,12 @@ export function createArtifactServerToolGroup(accessor?: IArtifactServerToolAcce
 					if (typeof id !== 'string' || id.length === 0) {
 						throw new Error(`Invalid ${ArtifactServerToolName.RemoveArtifactOrReference} input: id must be a non-empty string.`);
 					}
-					const result = await artifacts.mutate(collection => collection.remove(id));
+					const result = await artifacts.mutate(collection => {
+						const artifact = collection.artifacts.find(artifact => artifact.id === id);
+						return artifact?.chat === undefined || artifact.chat === context.chatUri
+							? collection.remove(id)
+							: { artifacts: collection.artifacts, removed: undefined };
+					});
 					if (!result.removed) {
 						return `No artifact or reference with id ${id}.`;
 					}
@@ -213,9 +218,10 @@ export function createArtifactServerToolGroup(accessor?: IArtifactServerToolAcce
 					return `${message}: ${describeArtifact(result.removed)}`;
 				}
 				case ArtifactServerToolName.ListArtifactsAndReferences: {
-					const current = artifacts.read().artifacts;
+					const current = artifacts.read().artifacts.filter(artifact =>
+						artifact.chat === undefined || artifact.chat === context.chatUri);
 					return current.length === 0
-						? 'No artifacts or references recorded for this session.'
+						? 'No artifacts or references recorded for this chat.'
 						: current.map(describeArtifact).join('\n');
 				}
 				default:
@@ -228,4 +234,4 @@ export function createArtifactServerToolGroup(accessor?: IArtifactServerToolAcce
 /**
  * The instruction added to the first outgoing turn while artifact tools are enabled.
  */
-export const ARTIFACT_TOOLS_INSTRUCTION = `Record notable artifacts and references with \`${ArtifactServerToolName.AddArtifactOrReference}\` so they are surfaced next to the chat input. Registration is optional, not an inventory of everything saved; default to no registration. ${artifactClassification} Other artifacts are deliverables the user explicitly requested or standalone results the user is clearly likely to reopen, download, or reuse; references are existing resources the user will likely want to view. Batch related entries in one call when practical. Do not record routine files, scratch files, caches, logs, intermediate results, or configuration snapshots unless the user asked for them as deliverables; persistence or location outside the workspace is not an eligibility signal. Do not record incidental resources, commits you create unless the user asks, or sessions and chats created with session-management tools. Never create, copy, or relocate a file solely to have an artifact to register.`;
+export const ARTIFACT_TOOLS_INSTRUCTION = `Record notable artifacts and references for the current chat with \`${ArtifactServerToolName.AddArtifactOrReference}\` so they are surfaced next to its input. Registration is optional, not an inventory of everything saved; default to no registration. ${artifactClassification} Other artifacts are deliverables the user explicitly requested or standalone results the user is clearly likely to reopen, download, or reuse; references are existing resources the user will likely want to view. Batch related entries in one call when practical. Do not record routine files, scratch files, caches, logs, intermediate results, or configuration snapshots unless the user asked for them as deliverables; persistence or location outside the workspace is not an eligibility signal. Do not record incidental resources, commits you create unless the user asks, or sessions and chats created with session-management tools. Never create, copy, or relocate a file solely to have an artifact to register.`;

@@ -9,7 +9,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { NullLogService } from '../../../log/common/log.js';
 import { ArtifactServerToolName } from '../../common/serverToolNames.js';
 import { readSessionArtifacts } from '../../common/sessionArtifacts.js';
-import { buildDefaultChatUri, SessionStatus } from '../../common/state/sessionState.js';
+import { buildChatUri, buildDefaultChatUri, SessionStatus } from '../../common/state/sessionState.js';
 import { AgentHostStateManager } from '../../node/agentHostStateManager.js';
 import { ARTIFACT_TOOLS_INSTRUCTION, artifactServerToolDefinitions, createArtifactServerToolGroup } from '../../node/shared/artifactServerTools.js';
 import { getServerToolDisplay } from '../../node/shared/serverToolGroups.js';
@@ -147,9 +147,52 @@ suite('Artifact Server Tools', () => {
 			messages: ['Added reference', 'Added artifact', 'Already recorded'],
 			persistCalls: 1,
 			artifacts: [
-				{ type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com/docs' },
-				{ type: 'file', label: 'Report', isArtifact: true, uri: 'file:///repo/report.md' },
+				{ type: 'website', label: 'Docs', chat: buildDefaultChatUri(sessionUri), isArtifact: false, link: 'https://example.com/docs' },
+				{ type: 'file', label: 'Report', chat: buildDefaultChatUri(sessionUri), isArtifact: true, uri: 'file:///repo/report.md' },
 			],
+		});
+	});
+
+	test('records, lists, and removes artifacts within the current chat', async () => {
+		const sessionUri = 'copilot:/chat-scoped';
+		const defaultChat = buildDefaultChatUri(sessionUri);
+		const peerChat = buildChatUri(sessionUri, 'peer');
+		const stateManager = store.add(new AgentHostStateManager(new NullLogService()));
+		stateManager.createSession({
+			resource: sessionUri,
+			provider: 'copilot',
+			title: 'Chat scoped',
+			status: SessionStatus.Idle,
+			createdAt: new Date(0).toISOString(),
+			modifiedAt: new Date(0).toISOString(),
+		});
+		const group = createArtifactServerToolGroup({ isEnabled: () => true, persist: () => { } });
+		const input = {
+			items: [{ type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com/docs' }],
+		};
+		await group.execute(stateManager, { sessionUri, chatUri: defaultChat, turnId: 'turn-1' }, ArtifactServerToolName.AddArtifactOrReference, input);
+		await group.execute(stateManager, { sessionUri, chatUri: peerChat, turnId: 'turn-2' }, ArtifactServerToolName.AddArtifactOrReference, input);
+		const artifacts = readSessionArtifacts(stateManager.getSessionState(sessionUri)?._meta);
+		const defaultList = await group.execute(stateManager, { sessionUri, chatUri: defaultChat, turnId: 'turn-3' }, ArtifactServerToolName.ListArtifactsAndReferences, {});
+		const peerId = artifacts.find(artifact => artifact.chat === peerChat)!.id;
+		const crossChatRemoval = await group.execute(stateManager, { sessionUri, chatUri: defaultChat, turnId: 'turn-4' }, ArtifactServerToolName.RemoveArtifactOrReference, { id: peerId });
+
+		assert.deepStrictEqual({
+			artifacts: artifacts.map(({ id: _id, ...artifact }) => artifact),
+			defaultListIds: artifacts.map(artifact => [artifact.id, defaultList.includes(artifact.id)]),
+			crossChatRemoval,
+			remaining: readSessionArtifacts(stateManager.getSessionState(sessionUri)?._meta).length,
+		}, {
+			artifacts: [
+				{ type: 'website', label: 'Docs', chat: defaultChat, isArtifact: false, link: 'https://example.com/docs' },
+				{ type: 'website', label: 'Docs', chat: peerChat, isArtifact: false, link: 'https://example.com/docs' },
+			],
+			defaultListIds: [
+				[artifacts[0].id, true],
+				[artifacts[1].id, false],
+			],
+			crossChatRemoval: `No artifact or reference with id ${peerId}.`,
+			remaining: 2,
 		});
 	});
 
